@@ -467,7 +467,7 @@ function Toolbar({ channelId }: { channelId: string; }) {
                     {busy && <span className="ftt-dot" />}
                     {busy ? "Loading" : doneAll ? "✓ All loaded" : "Loaded"}
                     {" · "}
-                    {shown === raw ? raw : `${shown} of ${raw} shown`}
+                    {shown === raw ? `${raw} loaded` : `${shown} matching · ${raw} loaded`}
                 </span>
                 <span className={"ftt-chev" + (open ? "" : " closed")}><ChevIcon /></span>
             </div>
