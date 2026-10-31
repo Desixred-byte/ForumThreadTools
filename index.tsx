@@ -174,6 +174,15 @@ const CSS = `
 .ftt-suggestion:hover,.ftt-suggestion.active{background:rgba(88,101,242,.28)}
 .ftt-suggestion-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ftt-suggestion-count{flex-shrink:0;color:#b5bac1;font-size:11px}
+.ftt-author-history{width:100%;min-width:0;box-sizing:border-box;border:1px solid rgba(255,255,255,.09);border-radius:12px;background:rgba(0,0,0,.18);padding:10px 12px}
+.ftt-author-history-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;font-size:13px}
+.ftt-author-history-head strong{color:#f2f3f5}
+.ftt-author-history-head span,.ftt-author-thread-meta{color:#aeb3bb;font-size:11px}
+.ftt-author-history-list{display:flex;flex-direction:column;max-height:320px;overflow-y:auto;overscroll-behavior:contain}
+.ftt-author-thread{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 7px;border-top:1px solid rgba(255,255,255,.06)}
+.ftt-author-thread-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#f2f3f5;font-size:13px}
+.ftt-author-thread-meta{flex-shrink:0}
+.ftt-author-empty{padding:10px 4px;color:#aeb3bb;font-size:12px}
 @media (prefers-reduced-motion:reduce){.ftt-root,.ftt-badge,.ftt-collapse,.ftt-chev,.ftt-btn{animation:none!important;transition:none!important}}
 `;
 
@@ -248,6 +257,22 @@ function getSuggestions(channelId: string, kind: "author" | "title", query: stri
         .map(([value, count]) => ({ value, count }));
 }
 
+function getAuthorThreads(channelId: string, query: string): any[] {
+    const term = query.trim();
+    if (!term) return [];
+
+    const threads: any[] = (ChannelStore as any).getAllThreadsForParent?.(channelId) ?? [];
+
+    return threads
+        .filter(thread => thread && matchesAuthor(thread, term))
+        .sort((a, b) => snowflakeTime(b.id) - snowflakeTime(a.id))
+        .map(thread => ({
+            id: String(thread.id),
+            name: String(thread.name ?? "Untitled thread"),
+            createdAt: snowflakeTime(thread.id),
+            locked: thread.threadMetadata?.locked === true
+        }));
+}
 function AutoCompleteField({
     icon, value, placeholder, label, onChange, suggestions
 }: {
@@ -351,6 +376,7 @@ function Toolbar({ channelId }: { channelId: string; }) {
     const availableTags: any[] = channel?.availableTags ?? [];
 const authorSuggestions = getSuggestions(channelId, "author", f.author);
 const titleSuggestions = getSuggestions(channelId, "title", f.query);
+    const authorThreads = getAuthorThreads(channelId, f.author);
 
     React.useEffect(() => {
         const t = setInterval(() => force(n => n + 1), 600);
@@ -408,6 +434,32 @@ const titleSuggestions = getSuggestions(channelId, "title", f.query);
                             <AutoCompleteField icon={<SearchIcon />} label="Search thread titles" placeholder="Search titles" value={f.query} onChange={v => setFilters({ query: v })} suggestions={titleSuggestions} />
                             <AutoCompleteField icon={<UserIcon />} label="Filter by author" placeholder="Author name or user ID" value={f.author} onChange={v => setFilters({ author: v })} suggestions={authorSuggestions} />
                         </div>
+                        {f.author.trim() && (
+                            <div className="ftt-author-history">
+                                <div className="ftt-author-history-head">
+                                    <strong>{authorThreads.length} matching threads</strong>
+                                    <span>Currently available in this forum</span>
+                                </div>
+                                {authorThreads.length > 0 ? (
+                                    <div className="ftt-author-history-list">
+                                        {authorThreads.map(thread => (
+                                            <div className="ftt-author-thread" key={thread.id}>
+                                                <span className="ftt-author-thread-title">{thread.name}</span>
+                                                <span className="ftt-author-thread-meta">
+                                                    {thread.createdAt ? new Date(thread.createdAt).toLocaleDateString() : "Date unavailable"}
+                                                    {" · "}
+                                                    {thread.locked ? "Locked" : "Open"}
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="ftt-author-empty">
+                                        No matching threads are currently loaded. Try Load all posts.
+                                    </div>
+                                )}
+                            </div>
+                        )}
 
                         <div className="ftt-row">
                             <span className="ftt-label"><SortIcon /> Sort</span>
@@ -486,6 +538,7 @@ export default definePlugin({
     setLoader,
     Toolbar
 });
+
 
 
 
