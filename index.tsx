@@ -169,11 +169,11 @@ const CSS = `
 
 .ftt-autocomplete{position:relative;flex:0 1 240px;width:240px;min-width:180px;max-width:240px;box-sizing:border-box;display:flex;flex-direction:column}
 .ftt-autocomplete>.ftt-input{flex:none;width:100%;box-sizing:border-box}
-.ftt-suggestions{position:static;width:100%;max-width:100%;box-sizing:border-box;max-height:180px;overflow-y:auto;overscroll-behavior:contain;margin-top:6px;background:#232428;border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:5px;box-shadow:0 6px 18px rgba(0,0,0,.28)}
-.ftt-suggestion{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:9px 10px;border:0;border-radius:7px;background:transparent;color:#f2f3f5;text-align:left;cursor:pointer;font:inherit}
-.ftt-suggestion:hover,.ftt-suggestion.active{background:rgba(88,101,242,.28)}
+.ftt-suggestions{position:static;width:100%;box-sizing:border-box;max-height:132px;overflow-y:auto;overscroll-behavior:contain;margin-top:4px;padding:2px 0;background:transparent;border:0;border-top:1px solid rgba(255,255,255,.08);scrollbar-width:thin}
+.ftt-suggestion{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:4px 8px;border:0;border-radius:5px;background:transparent;color:#b5bac1;text-align:left;cursor:pointer;font:inherit;font-size:12px;line-height:16px}
+.ftt-suggestion:hover,.ftt-suggestion.active{background:rgba(255,255,255,.07);color:#fff}
 .ftt-suggestion-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ftt-suggestion-count{flex-shrink:0;color:#b5bac1;font-size:11px}
+.ftt-suggestion-count{flex-shrink:0;color:#80848e;font-size:10px}
 .ftt-author-history{width:100%;min-width:0;box-sizing:border-box;border:1px solid rgba(255,255,255,.09);border-radius:12px;background:rgba(0,0,0,.18);padding:10px 12px}
 .ftt-author-history-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;font-size:13px}
 .ftt-author-history-head strong{color:#f2f3f5}
@@ -253,7 +253,7 @@ function getSuggestions(channelId: string, kind: "author" | "title", query: stri
             if (aStarts !== bStarts) return aStarts ? -1 : 1;
             return b[1] - a[1] || a[0].localeCompare(b[0]);
         })
-        .slice(0, 8)
+        .slice(0, 5)
         .map(([value, count]) => ({ value, count }));
 }
 
@@ -427,7 +427,7 @@ function AutoCompleteField({
         setActive(0);
     };
 
-    const visible = open && ready && value.trim().length >= 2 && suggestions.length > 0;
+    const visible = open && ready && value.trim().length >= 2 && suggestions.length > 0 && !(suggestions.length === 1 && suggestions[0].value === value.trim().toLowerCase());
 
     return (
         <div className="ftt-autocomplete">
@@ -484,7 +484,7 @@ function AutoCompleteField({
                             onClick={() => choose(item)}
                         >
                             <span className="ftt-suggestion-name">{item.value}</span>
-                            <span className="ftt-suggestion-count">{item.count} posts</span>
+                            <span className="ftt-suggestion-count">{item.count}</span>
                         </button>
                     ))}
                 </div>
@@ -492,57 +492,92 @@ function AutoCompleteField({
         </div>
     );
 }
+interface ScanState {
+    key: string;
+    threads: any[];
+    loading: boolean;
+    status: string;
+    complete: boolean;
+}
+
+let scanState: ScanState = { key: "", threads: [], loading: false, status: "", complete: false };
+const scanListeners = new Set<() => void>();
+
+function setScan(changes: Partial<ScanState>) {
+    scanState = { ...scanState, ...changes };
+    scanListeners.forEach(l => l());
+}
+
+function subscribeScan(listener: () => void) {
+    scanListeners.add(listener);
+    return () => { scanListeners.delete(listener); };
+}
+
+function useScan(): ScanState {
+    return (React as any).useSyncExternalStore(subscribeScan, () => scanState);
+}
+
 function Toolbar({ channelId }: { channelId: string; }) {
     const f = useFilters();
     const [open, setOpen] = React.useState(true);
     const [loading, setLoading] = React.useState(false);
     const [, force] = React.useState(0);
-    const [historyThreads, setHistoryThreads] = React.useState<any[]>([]);
-    const [historyLoading, setHistoryLoading] = React.useState(false);
-    const [historyStatus, setHistoryStatus] = React.useState("");
-    const [historyComplete, setHistoryComplete] = React.useState(false);
+    const scan = useScan();
+    const scanKey = channelId + ":" + f.author.trim().toLowerCase();
+    const sameScan = scan.key === scanKey;
+    const historyThreads: any[] = sameScan ? scan.threads : [];
+    const historyLoading = sameScan && scan.loading;
+    const historyStatus = sameScan ? scan.status : "";
+    const historyComplete = sameScan && scan.complete;
 
     const channel: any = ChannelStore.getChannel(channelId);
     const availableTags: any[] = channel?.availableTags ?? [];
-const authorSuggestions = getSuggestions(channelId, "author", f.author);
-const titleSuggestions = getSuggestions(channelId, "title", f.query);
-    const authorThreads = getAuthorThreads(channelId, f.author);
+    const threadCount: number = ((ChannelStore as any).getAllThreadsForParent?.(channelId) ?? []).length;
+    const authorSuggestions = React.useMemo(() => getSuggestions(channelId, "author", f.author), [channelId, f.author, threadCount]);
+    const titleSuggestions = React.useMemo(() => getSuggestions(channelId, "title", f.query), [channelId, f.query, threadCount]);
+    const authorThreads = React.useMemo(() => getAuthorThreads(channelId, f.author), [channelId, f.author, threadCount]);
 
     const scanAuthorHistory = async () => {
+        if (scanState.loading) return;
+
+        const key = scanKey;
         const authorId = resolveAuthorId(channelId, f.author);
         const guildId = String(channel?.getGuildId?.() ?? channel?.guild_id ?? channel?.guildId ?? "");
 
         if (!authorId) {
-            setHistoryStatus("Enter a user ID, or an exact username/global name known to this forum's loaded users.");
+            setScan({ key, threads: [], complete: false, status: "Enter a user ID, or an exact username/global name seen in this forum." });
             return;
         }
         if (!guildId) {
-            setHistoryStatus("Could not determine this forum's server ID.");
+            setScan({ key, threads: [], complete: false, status: "Could not determine this forum's server ID." });
             return;
         }
 
-        setHistoryLoading(true);
-        setHistoryThreads([]);
-        setHistoryComplete(false);
-        setHistoryStatus("Starting scan…");
+        setScan({ key, loading: true, threads: [], complete: false, status: "Starting scan…" });
 
+        let lastUpdate = 0;
         try {
-            const result = await scanAuthorForumThreads(
-                channelId,
-                guildId,
-                authorId,
-                setHistoryStatus
-            );
-            setHistoryThreads(result.threads);
-            setHistoryComplete(result.complete);
-            setHistoryStatus(result.message);
+            const result = await scanAuthorForumThreads(channelId, guildId, authorId, message => {
+                const now = Date.now();
+                if (now - lastUpdate < 400) return;
+                lastUpdate = now;
+                setScan({ key, status: message });
+            });
+            setScan({ key, threads: result.threads, complete: result.complete, status: result.message });
         } finally {
-            setHistoryLoading(false);
+            setScan({ loading: false });
         }
     };
 
     React.useEffect(() => {
-        const t = setInterval(() => force(n => n + 1), 600);
+        let last = counts.raw[0] + counts.raw[1] + counts.shown[0] + counts.shown[1];
+        const t = setInterval(() => {
+            const now = counts.raw[0] + counts.raw[1] + counts.shown[0] + counts.shown[1];
+            if (now !== last) {
+                last = now;
+                force(n => n + 1);
+            }
+        }, 1000);
         return () => clearInterval(t);
     }, []);
 
