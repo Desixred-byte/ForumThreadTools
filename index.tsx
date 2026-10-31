@@ -5,7 +5,7 @@
  */
 
 import definePlugin from "@utils/types";
-import { ChannelStore, React, RestAPI, UserStore } from "@webpack/common";
+import { ChannelStore, React, UserStore } from "@webpack/common";
 
 type SortMode = "native" | "newest" | "oldest" | "active";
 type StatusMode = "all" | "open" | "locked";
@@ -257,148 +257,6 @@ function getSuggestions(channelId: string, kind: "author" | "title", query: stri
         .map(([value, count]) => ({ value, count }));
 }
 
-function getAuthorThreads(channelId: string, query: string): any[] {
-    const term = query.trim();
-    if (!term) return [];
-
-    const threads: any[] = (ChannelStore as any).getAllThreadsForParent?.(channelId) ?? [];
-
-    return threads
-        .filter(thread => thread && matchesAuthor(thread, term))
-        .sort((a, b) => snowflakeTime(b.id) - snowflakeTime(a.id))
-        .map(thread => ({
-            id: String(thread.id),
-            name: String(thread.name ?? "Untitled thread"),
-            createdAt: snowflakeTime(thread.id),
-            locked: thread.threadMetadata?.locked === true
-        }));
-}
-
-function resolveAuthorId(channelId: string, query: string): string | null {
-    const term = query.trim();
-    if (!term) return null;
-    if (/^\d{17,20}$/.test(term)) return term;
-
-    const threads: any[] = (ChannelStore as any).getAllThreadsForParent?.(channelId) ?? [];
-    const lower = term.toLowerCase();
-
-    for (const thread of threads) {
-        const id = String(thread?.ownerId ?? thread?.owner_id ?? "");
-        if (!id) continue;
-
-        const user: any = UserStore.getUser(id);
-        const username = String(user?.username ?? "").toLowerCase();
-        const globalName = String(user?.globalName ?? "").toLowerCase();
-
-        if (username === lower || globalName === lower) return id;
-    }
-
-    return null;
-}
-
-function errText(e: any): string {
-    if (!e) return "Unknown error";
-    if (typeof e === "string") return e;
-    const status = e.status ?? e.statusCode;
-    const msg = e.body?.message ?? e.message ?? e.text;
-    if (status || msg) return `${status ? "HTTP " + status + ": " : ""}${msg ?? "request failed"}`;
-    try { return JSON.stringify(e).slice(0, 200); } catch { return String(e); }
-}
-
-async function scanAuthorForumThreads(
-    channelId: string,
-    guildId: string,
-    authorId: string,
-    onProgress: (message: string) => void
-): Promise<{ threads: any[]; complete: boolean; message: string }> {
-    const found = new Map<string, any>();
-    const notes: string[] = [];
-    let complete = true;
-
-    const add = (list: any[]) => {
-        for (const thread of list) {
-            if (!thread?.id) continue;
-            const parentId = String(thread.parent_id ?? thread.parentId ?? "");
-            const ownerId = String(thread.owner_id ?? thread.ownerId ?? "");
-            if (parentId === channelId && ownerId === authorId) found.set(String(thread.id), thread);
-        }
-    };
-
-    const finish = () => {
-        const threads = [...found.values()]
-            .sort((a, b) => snowflakeTime(String(b.id)) - snowflakeTime(String(a.id)))
-            .map(thread => ({
-                id: String(thread.id),
-                name: String(thread.name ?? "Untitled thread"),
-                createdAt: snowflakeTime(String(thread.id)),
-                locked: (thread.thread_metadata ?? thread.threadMetadata)?.locked === true
-            }));
-        return {
-            threads,
-            complete,
-            message: complete ? "Scan complete." : `Scan incomplete: ${notes.join(" | ")}`
-        };
-    };
-
-    // Threads already known to the client.
-    add((ChannelStore as any).getAllThreadsForParent?.(channelId) ?? []);
-
-    // Same endpoint the Discord client uses for forum posts.
-    let searchWorked = false;
-    for (const archived of [false, true]) {
-        let offset = 0;
-        for (let i = 0; i < 400; i++) {
-            onProgress(`Searching ${archived ? "archived" : "active"} posts… ${offset} checked, ${found.size} found`);
-            let body: any;
-            try {
-                const res = await RestAPI.get({
-                    url: `/channels/${channelId}/threads/search`,
-                    query: { archived, sort_by: "creation_time", sort_order: "desc", limit: 25, offset },
-                    retries: 2
-                });
-                body = res?.body;
-                searchWorked = true;
-            } catch (e) {
-                complete = false;
-                notes.push(`search (${archived ? "archived" : "active"}) ${errText(e)}`);
-                break;
-            }
-
-            const batch: any[] = body?.threads ?? [];
-            add(batch);
-            offset += batch.length;
-            if (!batch.length || body?.has_more !== true) break;
-            await new Promise(r => setTimeout(r, 250));
-        }
-    }
-
-    // Fallback if search was unavailable entirely.
-    if (!searchWorked) {
-        let before: string | undefined;
-        for (let i = 0; i < 200; i++) {
-            onProgress(`Fallback scan… ${found.size} found`);
-            try {
-                const res = await RestAPI.get({
-                    url: `/channels/${channelId}/threads/archived/public`,
-                    query: { limit: 100, ...(before ? { before } : {}) },
-                    retries: 2
-                });
-                const body = res?.body;
-                const batch: any[] = body?.threads ?? [];
-                add(batch);
-                const last = batch[batch.length - 1];
-                const next = last?.thread_metadata?.archive_timestamp;
-                if (!batch.length || body?.has_more !== true || !next || next === before) break;
-                before = String(next);
-            } catch (e) {
-                notes.push(`archived ${errText(e)}`);
-                break;
-            }
-        }
-    }
-
-    return finish();
-}
 function AutoCompleteField({
     icon, value, placeholder, label, onChange, suggestions
 }: {
@@ -492,82 +350,17 @@ function AutoCompleteField({
         </div>
     );
 }
-interface ScanState {
-    key: string;
-    threads: any[];
-    loading: boolean;
-    status: string;
-    complete: boolean;
-}
-
-let scanState: ScanState = { key: "", threads: [], loading: false, status: "", complete: false };
-const scanListeners = new Set<() => void>();
-
-function setScan(changes: Partial<ScanState>) {
-    scanState = { ...scanState, ...changes };
-    scanListeners.forEach(l => l());
-}
-
-function subscribeScan(listener: () => void) {
-    scanListeners.add(listener);
-    return () => { scanListeners.delete(listener); };
-}
-
-function useScan(): ScanState {
-    return (React as any).useSyncExternalStore(subscribeScan, () => scanState);
-}
-
 function Toolbar({ channelId }: { channelId: string; }) {
     const f = useFilters();
     const [open, setOpen] = React.useState(true);
     const [loading, setLoading] = React.useState(false);
     const [, force] = React.useState(0);
-    const scan = useScan();
-    const scanKey = channelId + ":" + f.author.trim().toLowerCase();
-    const sameScan = scan.key === scanKey;
-    const historyThreads: any[] = sameScan ? scan.threads : [];
-    const historyLoading = sameScan && scan.loading;
-    const historyStatus = sameScan ? scan.status : "";
-    const historyComplete = sameScan && scan.complete;
 
     const channel: any = ChannelStore.getChannel(channelId);
     const availableTags: any[] = channel?.availableTags ?? [];
     const threadCount: number = ((ChannelStore as any).getAllThreadsForParent?.(channelId) ?? []).length;
     const authorSuggestions = React.useMemo(() => getSuggestions(channelId, "author", f.author), [channelId, f.author, threadCount]);
     const titleSuggestions = React.useMemo(() => getSuggestions(channelId, "title", f.query), [channelId, f.query, threadCount]);
-    const authorThreads = React.useMemo(() => getAuthorThreads(channelId, f.author), [channelId, f.author, threadCount]);
-
-    const scanAuthorHistory = async () => {
-        if (scanState.loading) return;
-
-        const key = scanKey;
-        const authorId = resolveAuthorId(channelId, f.author);
-        const guildId = String(channel?.getGuildId?.() ?? channel?.guild_id ?? channel?.guildId ?? "");
-
-        if (!authorId) {
-            setScan({ key, threads: [], complete: false, status: "Enter a user ID, or an exact username/global name seen in this forum." });
-            return;
-        }
-        if (!guildId) {
-            setScan({ key, threads: [], complete: false, status: "Could not determine this forum's server ID." });
-            return;
-        }
-
-        setScan({ key, loading: true, threads: [], complete: false, status: "Starting scan…" });
-
-        let lastUpdate = 0;
-        try {
-            const result = await scanAuthorForumThreads(channelId, guildId, authorId, message => {
-                const now = Date.now();
-                if (now - lastUpdate < 400) return;
-                lastUpdate = now;
-                setScan({ key, status: message });
-            });
-            setScan({ key, threads: result.threads, complete: result.complete, status: result.message });
-        } finally {
-            setScan({ loading: false });
-        }
-    };
 
     React.useEffect(() => {
         let last = counts.raw[0] + counts.raw[1] + counts.shown[0] + counts.shown[1];
@@ -632,41 +425,9 @@ function Toolbar({ channelId }: { channelId: string; }) {
                             <AutoCompleteField icon={<SearchIcon />} label="Search thread titles" placeholder="Search titles" value={f.query} onChange={v => setFilters({ query: v })} suggestions={titleSuggestions} />
                             <AutoCompleteField icon={<UserIcon />} label="Filter by author" placeholder="Author name or user ID" value={f.author} onChange={v => setFilters({ author: v })} suggestions={authorSuggestions} />
                         </div>
-                        {f.author.trim() && (
-                            <div className="ftt-author-history">
-                                <div className="ftt-author-history-head">
-                                    <strong>
-                                        {historyThreads.length} threads found
-                                        {historyComplete ? " · Scan complete" : ""}
-                                    </strong>
-                                    <Btn className="primary" onClick={() => void scanAuthorHistory()}>
-                                        {historyLoading ? <><LoaderIcon /> Scanning…</> : "Scan full history"}
-                                    </Btn>
-                                </div>
-                                <div className="ftt-author-empty">
-                                    {historyStatus || "Scan active and accessible archived public threads to count this user's forum posts."}
-                                </div>
-                                {historyThreads.length > 0 && (
-                                    <div className="ftt-author-history-list">
-                                        {historyThreads.map(thread => (
-                                            <div className="ftt-author-thread" key={thread.id}>
-                                                <span className="ftt-author-thread-title">{thread.name}</span>
-                                                <span className="ftt-author-thread-meta">
-                                                    {thread.createdAt ? new Date(thread.createdAt).toLocaleDateString() : "Date unavailable"}
-                                                    {" · "}
-                                                    {thread.locked ? "Locked" : "Open"}
-                                                </span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                                {!historyThreads.length && !historyLoading && (
-                                    <div className="ftt-author-empty">
-                                        {authorThreads.length} matching threads are currently in the local cache.
-                                    </div>
-                                )}
-                            </div>
-                        )}
+                        {((globalThis as any).__fttPanels as any[] | undefined)?.map((Panel, i) => (
+                            <Panel key={i} channelId={channelId} author={f.author} />
+                        ))}
 
                         <div className="ftt-row">
                             <span className="ftt-label"><SortIcon /> Sort</span>
