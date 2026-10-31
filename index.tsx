@@ -166,10 +166,10 @@ const CSS = `
 .ftt-btn.primary:hover{background:#4752c4}
 .ftt-btn.danger:hover{background:rgba(218,55,60,.85)}
 .ftt-tagimg{width:16px;height:16px;border-radius:3px;object-fit:contain}
-.ftt-root{overflow:visible}
-.ftt-autocomplete{position:relative;flex:1 1 200px;min-width:180px}
+
+.ftt-autocomplete{position:relative;flex:1 1 260px;min-width:0;max-width:100%;box-sizing:border-box;display:flex;flex-direction:column}
 .ftt-autocomplete>.ftt-input{width:100%;box-sizing:border-box}
-.ftt-suggestions{position:absolute;top:calc(100% + 7px);left:0;right:0;z-index:1000;max-height:280px;overflow-y:auto;background:#232428;border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:5px;box-shadow:0 12px 32px rgba(0,0,0,.45)}
+.ftt-suggestions{position:static;width:100%;max-width:100%;box-sizing:border-box;max-height:180px;overflow-y:auto;overscroll-behavior:contain;margin-top:6px;background:#232428;border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:5px;box-shadow:0 6px 18px rgba(0,0,0,.28)}
 .ftt-suggestion{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:9px 10px;border:0;border-radius:7px;background:transparent;color:#f2f3f5;text-align:left;cursor:pointer;font:inherit}
 .ftt-suggestion:hover,.ftt-suggestion.active{background:rgba(88,101,242,.28)}
 .ftt-suggestion-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -215,6 +215,7 @@ function getSuggestions(channelId: string, kind: "author" | "title", query: stri
     const threads: any[] = channelStore.getAllThreadsForParent?.(channelId) ?? [];
     const entries = new Map<string, number>();
     const term = query.trim().toLowerCase();
+    if (term.length < 2) return [];
 
     for (const thread of threads) {
         if (!thread) continue;
@@ -259,6 +260,15 @@ function AutoCompleteField({
 }) {
     const [open, setOpen] = React.useState(false);
     const [active, setActive] = React.useState(0);
+    const [ready, setReady] = React.useState(false);
+
+    React.useEffect(() => {
+        setReady(false);
+        if (value.trim().length < 2) return;
+
+        const timer = setTimeout(() => setReady(true), 300);
+        return () => clearTimeout(timer);
+    }, [value]);
 
     const choose = (item: Suggestion) => {
         onChange(item.value);
@@ -266,7 +276,7 @@ function AutoCompleteField({
         setActive(0);
     };
 
-    const visible = open && suggestions.length > 0;
+    const visible = open && ready && value.trim().length >= 2 && suggestions.length > 0;
 
     return (
         <div className="ftt-autocomplete">
@@ -476,5 +486,6 @@ export default definePlugin({
     setLoader,
     Toolbar
 });
+
 
 
