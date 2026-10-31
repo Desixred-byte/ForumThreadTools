@@ -133,7 +133,7 @@ function useFiltered(list: any, slot: number) {
 }
 
 const CSS = `
-.ftt-root{background:rgba(255,255,255,0.035);border:1px solid rgba(255,255,255,0.08);border-radius:16px;margin:8px 0 14px;color:#f2f3f5;overflow:hidden;animation:ftt-in .3s cubic-bezier(.2,.8,.2,1) both;box-shadow:0 2px 10px rgba(0,0,0,.25)}
+.ftt-root{background:rgba(255,255,255,0.035);border:1px solid rgba(255,255,255,0.08);border-radius:16px;margin:8px 0 14px;color:#f2f3f5;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.25)}
 @keyframes ftt-in{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
 @keyframes ftt-spin{to{transform:rotate(360deg)}}
 .ftt-spin{animation:ftt-spin .9s linear infinite}
@@ -166,6 +166,15 @@ const CSS = `
 .ftt-btn.primary:hover{background:#4752c4}
 .ftt-btn.danger:hover{background:rgba(218,55,60,.85)}
 .ftt-tagimg{width:16px;height:16px;border-radius:3px;object-fit:contain}
+.ftt-summary{display:inline-flex;align-items:center;font-variant-numeric:tabular-nums;transition:color .2s}
+.ftt-summary.busy{color:#dbdee1}
+.ftt-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#5865f2;margin-right:7px;animation:ftt-pulse 1s ease-in-out infinite}
+@keyframes ftt-pulse{0%,100%{opacity:.35;transform:scale(.8)}50%{opacity:1;transform:scale(1.15)}}
+.ftt-progress{height:2px;overflow:hidden;opacity:0;transition:opacity .3s ease;background:rgba(255,255,255,.05)}
+.ftt-progress.on{opacity:1}
+.ftt-progress>span{display:block;height:100%;width:35%;background:linear-gradient(90deg,transparent,#5865f2,transparent);animation:ftt-slide 1.1s ease-in-out infinite}
+@keyframes ftt-slide{from{transform:translateX(-100%)}to{transform:translateX(300%)}}
+@media (prefers-reduced-motion:reduce){.ftt-dot,.ftt-progress>span{animation:none!important}}
 
 .ftt-autocomplete{position:relative;flex:0 1 240px;width:240px;min-width:180px;max-width:240px;box-sizing:border-box;display:flex;flex-direction:column}
 .ftt-autocomplete>.ftt-input{flex:none;width:100%;box-sizing:border-box}
@@ -174,15 +183,6 @@ const CSS = `
 .ftt-suggestion:hover,.ftt-suggestion.active{background:rgba(255,255,255,.07);color:#fff}
 .ftt-suggestion-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ftt-suggestion-count{flex-shrink:0;color:#80848e;font-size:10px}
-.ftt-author-history{width:100%;min-width:0;box-sizing:border-box;border:1px solid rgba(255,255,255,.09);border-radius:12px;background:rgba(0,0,0,.18);padding:10px 12px}
-.ftt-author-history-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;font-size:13px}
-.ftt-author-history-head strong{color:#f2f3f5}
-.ftt-author-history-head span,.ftt-author-thread-meta{color:#aeb3bb;font-size:11px}
-.ftt-author-history-list{display:flex;flex-direction:column;max-height:320px;overflow-y:auto;overscroll-behavior:contain}
-.ftt-author-thread{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 7px;border-top:1px solid rgba(255,255,255,.06)}
-.ftt-author-thread-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#f2f3f5;font-size:13px}
-.ftt-author-thread-meta{flex-shrink:0}
-.ftt-author-empty{padding:10px 4px;color:#aeb3bb;font-size:12px}
 @media (prefers-reduced-motion:reduce){.ftt-root,.ftt-badge,.ftt-collapse,.ftt-chev,.ftt-btn{animation:none!important;transition:none!important}}
 `;
 
@@ -350,10 +350,35 @@ function AutoCompleteField({
         </div>
     );
 }
+const toolbarMemory = { channelId: "", open: true, loading: false, done: false };
+
 function Toolbar({ channelId }: { channelId: string; }) {
     const f = useFilters();
-    const [open, setOpen] = React.useState(true);
-    const [loading, setLoading] = React.useState(false);
+    if (toolbarMemory.channelId !== channelId) {
+        toolbarMemory.channelId = channelId;
+        toolbarMemory.loading = false;
+        toolbarMemory.done = false;
+    }
+
+    const [open, setOpenState] = React.useState(toolbarMemory.open);
+    const setOpen = (fn: (o: boolean) => boolean) => setOpenState(o => {
+        const next = fn(o);
+        toolbarMemory.open = next;
+        return next;
+    });
+
+    const [loading, setLoadingState] = React.useState(toolbarMemory.loading);
+    const setLoading = (v: boolean | ((l: boolean) => boolean)) => setLoadingState(prev => {
+        const next = typeof v === "function" ? v(prev) : v;
+        toolbarMemory.loading = next;
+        return next;
+    });
+
+    const [doneAll, setDoneAllState] = React.useState(toolbarMemory.done);
+    const setDoneAll = (v: boolean) => {
+        toolbarMemory.done = v;
+        setDoneAllState(v);
+    };
     const [, force] = React.useState(0);
 
     const channel: any = ChannelStore.getChannel(channelId);
@@ -362,15 +387,39 @@ function Toolbar({ channelId }: { channelId: string; }) {
     const authorSuggestions = React.useMemo(() => getSuggestions(channelId, "author", f.author), [channelId, f.author, threadCount]);
     const titleSuggestions = React.useMemo(() => getSuggestions(channelId, "title", f.query), [channelId, f.query, threadCount]);
 
+    const lastChange = React.useRef(0);
+
     React.useEffect(() => {
-        let last = counts.raw[0] + counts.raw[1] + counts.shown[0] + counts.shown[1];
+        let lastRaw = counts.raw[0] + counts.raw[1];
+        let lastShown = counts.shown[0] + counts.shown[1];
+        let wasBusy = false;
+
         const t = setInterval(() => {
-            const now = counts.raw[0] + counts.raw[1] + counts.shown[0] + counts.shown[1];
-            if (now !== last) {
-                last = now;
-                force(n => n + 1);
+            const rawNow = counts.raw[0] + counts.raw[1];
+            const shownNow = counts.shown[0] + counts.shown[1];
+            let changed = false;
+
+            if (rawNow !== lastRaw) {
+                lastRaw = rawNow;
+                lastChange.current = Date.now();
+                toolbarMemory.done = false;
+                setDoneAllState(false);
+                changed = true;
             }
-        }, 1000);
+            if (shownNow !== lastShown) {
+                lastShown = shownNow;
+                changed = true;
+            }
+
+            const busyNow = Date.now() - lastChange.current < 2000;
+            if (busyNow !== wasBusy) {
+                wasBusy = busyNow;
+                changed = true;
+            }
+
+            if (changed) force(n => n + 1);
+        }, 400);
+
         return () => clearInterval(t);
     }, []);
 
@@ -383,6 +432,7 @@ function Toolbar({ channelId }: { channelId: string; }) {
             stale = now === last ? stale + 1 : 0;
             last = now;
             if (stale >= 4 || !loadMore) {
+                setDoneAll(stale >= 4);
                 setLoading(false);
                 return;
             }
@@ -393,6 +443,7 @@ function Toolbar({ channelId }: { channelId: string; }) {
 
     const raw = counts.raw[0] + counts.raw[1];
     const shown = counts.shown[0] + counts.shown[1];
+    const busy = loading || Date.now() - lastChange.current < 2000;
 
     const activeCount =
         (f.query.trim() ? 1 : 0) + (f.author.trim() ? 1 : 0) + f.tags.length +
@@ -412,11 +463,16 @@ function Toolbar({ channelId }: { channelId: string; }) {
                 <FilterIcon />
                 <span className="ftt-title">Thread tools</span>
                 {activeCount > 0 && <span className="ftt-badge" key={activeCount}>{activeCount}</span>}
-                <span className="ftt-summary">
-                    {loading ? "Loading more posts… " : ""}{shown} of {raw} loaded
+                <span className={"ftt-summary" + (busy ? " busy" : "")}>
+                    {busy && <span className="ftt-dot" />}
+                    {busy ? "Loading" : doneAll ? "✓ All loaded" : "Loaded"}
+                    {" · "}
+                    {shown === raw ? raw : `${shown} of ${raw} shown`}
                 </span>
                 <span className={"ftt-chev" + (open ? "" : " closed")}><ChevIcon /></span>
             </div>
+
+            <div className={"ftt-progress" + (busy ? " on" : "")}><span /></div>
 
             <div className={"ftt-collapse" + (open ? "" : " closed")}>
                 <div>
@@ -425,9 +481,6 @@ function Toolbar({ channelId }: { channelId: string; }) {
                             <AutoCompleteField icon={<SearchIcon />} label="Search thread titles" placeholder="Search titles" value={f.query} onChange={v => setFilters({ query: v })} suggestions={titleSuggestions} />
                             <AutoCompleteField icon={<UserIcon />} label="Filter by author" placeholder="Author name or user ID" value={f.author} onChange={v => setFilters({ author: v })} suggestions={authorSuggestions} />
                         </div>
-                        {((globalThis as any).__fttPanels as any[] | undefined)?.map((Panel, i) => (
-                            <Panel key={i} channelId={channelId} author={f.author} />
-                        ))}
 
                         <div className="ftt-row">
                             <span className="ftt-label"><SortIcon /> Sort</span>
@@ -461,7 +514,7 @@ function Toolbar({ channelId }: { channelId: string; }) {
                         )}
 
                         <div className="ftt-row">
-                            <Btn className="primary" onClick={() => setLoading(l => !l)}>
+                            <Btn className="primary" onClick={() => { setDoneAll(false); setLoading(l => !l); }}>
                                 {loading ? <><LoaderIcon /> Stop loading</> : <><DownloadIcon /> Load all posts</>}
                             </Btn>
                             <Btn className="danger" onClick={() => setFilters(DEFAULT_FILTERS)}><XIcon /> Clear all</Btn>
