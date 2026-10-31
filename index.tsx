@@ -166,6 +166,14 @@ const CSS = `
 .ftt-btn.primary:hover{background:#4752c4}
 .ftt-btn.danger:hover{background:rgba(218,55,60,.85)}
 .ftt-tagimg{width:16px;height:16px;border-radius:3px;object-fit:contain}
+.ftt-root{overflow:visible}
+.ftt-autocomplete{position:relative;flex:1 1 200px;min-width:180px}
+.ftt-autocomplete>.ftt-input{width:100%;box-sizing:border-box}
+.ftt-suggestions{position:absolute;top:calc(100% + 7px);left:0;right:0;z-index:1000;max-height:280px;overflow-y:auto;background:#232428;border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:5px;box-shadow:0 12px 32px rgba(0,0,0,.45)}
+.ftt-suggestion{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:9px 10px;border:0;border-radius:7px;background:transparent;color:#f2f3f5;text-align:left;cursor:pointer;font:inherit}
+.ftt-suggestion:hover,.ftt-suggestion.active{background:rgba(88,101,242,.28)}
+.ftt-suggestion-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ftt-suggestion-count{flex-shrink:0;color:#b5bac1;font-size:11px}
 @media (prefers-reduced-motion:reduce){.ftt-root,.ftt-badge,.ftt-collapse,.ftt-chev,.ftt-btn{animation:none!important;transition:none!important}}
 `;
 
@@ -197,20 +205,132 @@ function Btn({ active, onClick, className = "", children }: { active?: boolean; 
     );
 }
 
-function TextField({ icon, value, placeholder, label, onChange }: { icon: React.ReactNode; value: string; placeholder: string; label: string; onChange: (v: string) => void; }) {
-    return (
-        <label className="ftt-input">
-            {icon}
-            <input aria-label={label} placeholder={placeholder} value={value} onChange={e => onChange(e.currentTarget.value)} />
-            {value && (
-                <button type="button" className="ftt-x" aria-label="Clear" onClick={() => onChange("")}>
-                    <XIcon />
-                </button>
-            )}
-        </label>
-    );
+interface Suggestion {
+    value: string;
+    count: number;
 }
 
+function getSuggestions(channelId: string, kind: "author" | "title", query: string): Suggestion[] {
+    const channelStore: any = ChannelStore;
+    const threads: any[] = channelStore.getAllThreadsForParent?.(channelId) ?? [];
+    const entries = new Map<string, number>();
+    const term = query.trim().toLowerCase();
+
+    for (const thread of threads) {
+        if (!thread) continue;
+
+        let value = "";
+
+        if (kind === "title") {
+            value = String(thread.name ?? "").trim();
+        } else {
+            const id = String(thread.ownerId ?? "");
+            const user: any = id ? UserStore.getUser(id) : null;
+            value = String(user?.username ?? user?.globalName ?? id).trim();
+        }
+
+        if (!value) continue;
+
+        const key = value.toLowerCase();
+        entries.set(key, (entries.get(key) ?? 0) + 1);
+    }
+
+    return [...entries.entries()]
+        .filter(([key]) => !term || key.includes(term))
+        .sort((a, b) => {
+            const aStarts = a[0].startsWith(term);
+            const bStarts = b[0].startsWith(term);
+            if (aStarts !== bStarts) return aStarts ? -1 : 1;
+            return b[1] - a[1] || a[0].localeCompare(b[0]);
+        })
+        .slice(0, 8)
+        .map(([value, count]) => ({ value, count }));
+}
+
+function AutoCompleteField({
+    icon, value, placeholder, label, onChange, suggestions
+}: {
+    icon: React.ReactNode;
+    value: string;
+    placeholder: string;
+    label: string;
+    onChange: (v: string) => void;
+    suggestions: Suggestion[];
+}) {
+    const [open, setOpen] = React.useState(false);
+    const [active, setActive] = React.useState(0);
+
+    const choose = (item: Suggestion) => {
+        onChange(item.value);
+        setOpen(false);
+        setActive(0);
+    };
+
+    const visible = open && suggestions.length > 0;
+
+    return (
+        <div className="ftt-autocomplete">
+            <label className="ftt-input">
+                {icon}
+                <input
+                    aria-label={label}
+                    aria-autocomplete="list"
+                    aria-expanded={visible}
+                    placeholder={placeholder}
+                    value={value}
+                    onFocus={() => setOpen(true)}
+                    onChange={e => {
+                        onChange(e.currentTarget.value);
+                        setActive(0);
+                        setOpen(true);
+                    }}
+                    onKeyDown={e => {
+                        if (e.key === "ArrowDown" && suggestions.length) {
+                            e.preventDefault();
+                            setOpen(true);
+                            setActive(n => (n + 1) % suggestions.length);
+                        } else if (e.key === "ArrowUp" && suggestions.length) {
+                            e.preventDefault();
+                            setOpen(true);
+                            setActive(n => (n - 1 + suggestions.length) % suggestions.length);
+                        } else if (e.key === "Enter" && visible) {
+                            e.preventDefault();
+                            choose(suggestions[active] ?? suggestions[0]);
+                        } else if (e.key === "Escape") {
+                            setOpen(false);
+                        }
+                    }}
+                />
+                {value && (
+                    <button type="button" className="ftt-x" aria-label="Clear"
+                        onClick={() => { onChange(""); setOpen(true); }}>
+                        <XIcon />
+                    </button>
+                )}
+            </label>
+
+            {visible && (
+                <div className="ftt-suggestions" role="listbox">
+                    {suggestions.map((item, index) => (
+                        <button
+                            type="button"
+                            role="option"
+                            aria-selected={index === active}
+                            className={"ftt-suggestion" + (index === active ? " active" : "")}
+                            key={item.value}
+                            onMouseEnter={() => setActive(index)}
+                            onMouseDown={e => e.preventDefault()}
+                            onClick={() => choose(item)}
+                        >
+                            <span className="ftt-suggestion-name">{item.value}</span>
+                            <span className="ftt-suggestion-count">{item.count} posts</span>
+                        </button>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
 function Toolbar({ channelId }: { channelId: string; }) {
     const f = useFilters();
     const [open, setOpen] = React.useState(true);
@@ -219,6 +339,8 @@ function Toolbar({ channelId }: { channelId: string; }) {
 
     const channel: any = ChannelStore.getChannel(channelId);
     const availableTags: any[] = channel?.availableTags ?? [];
+const authorSuggestions = getSuggestions(channelId, "author", f.author);
+const titleSuggestions = getSuggestions(channelId, "title", f.query);
 
     React.useEffect(() => {
         const t = setInterval(() => force(n => n + 1), 600);
@@ -273,8 +395,8 @@ function Toolbar({ channelId }: { channelId: string; }) {
                 <div>
                     <div className="ftt-body">
                         <div className="ftt-row">
-                            <TextField icon={<SearchIcon />} label="Search thread titles" placeholder="Search titles" value={f.query} onChange={v => setFilters({ query: v })} />
-                            <TextField icon={<UserIcon />} label="Filter by author" placeholder="Author name or user ID" value={f.author} onChange={v => setFilters({ author: v })} />
+                            <AutoCompleteField icon={<SearchIcon />} label="Search thread titles" placeholder="Search titles" value={f.query} onChange={v => setFilters({ query: v })} suggestions={titleSuggestions} />
+                            <AutoCompleteField icon={<UserIcon />} label="Filter by author" placeholder="Author name or user ID" value={f.author} onChange={v => setFilters({ author: v })} suggestions={authorSuggestions} />
                         </div>
 
                         <div className="ftt-row">
@@ -354,4 +476,5 @@ export default definePlugin({
     setLoader,
     Toolbar
 });
+
 
