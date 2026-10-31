@@ -5,7 +5,7 @@
  */
 
 import definePlugin from "@utils/types";
-import { ChannelStore, React, UserStore } from "@webpack/common";
+import { ChannelStore, GuildMemberStore, React, UserStore } from "@webpack/common";
 
 type SortMode = "native" | "newest" | "oldest" | "active";
 type StatusMode = "all" | "open" | "locked";
@@ -59,19 +59,24 @@ function matchesAuthor(thread: any, search: string): boolean {
     const term = search.trim().toLowerCase();
     if (!term) return true;
 
-    const id = String(thread.ownerId ?? "");
-    const user: any = id ? UserStore.getUser(id) : null;
+    const id = String(thread.ownerId ?? thread.owner_id ?? "");
+    if (!id) return false;
 
-    return (
-        id.toLowerCase().includes(term) ||
-        String(user?.username ?? "").toLowerCase().includes(term) ||
-        String(user?.globalName ?? "").toLowerCase().includes(term)
-    );
+    const me = UserStore.getCurrentUser()?.id;
+    if ((term === "me" || term === "@me") && me) return id === me;
+
+    if (id.includes(term)) return true;
+
+    const user: any = UserStore.getUser(id);
+    const guildId = String(thread.guild_id ?? thread.guildId ?? "");
+    const member: any = guildId ? (GuildMemberStore as any).getMember?.(guildId, id) : null;
+
+    return [user?.username, user?.globalName, member?.nick].some(v => String(v ?? "").toLowerCase().includes(term));
 }
 
 function matchesThread(threadId: string, f: ThreadFilters): boolean {
     const thread: any = ChannelStore.getChannel(threadId);
-    if (!thread) return true;
+    if (!thread) return false;
 
     if (!matchesAuthor(thread, f.author)) return false;
 
@@ -133,7 +138,7 @@ function useFiltered(list: any, slot: number) {
 }
 
 const CSS = `
-.ftt-root{background:rgba(255,255,255,0.035);border:1px solid rgba(255,255,255,0.08);border-radius:16px;margin:8px 0 14px;color:#f2f3f5;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.25)}
+.ftt-root{position:sticky;top:0;z-index:20;max-height:60vh;overflow-y:auto!important;background:var(--background-base-lowest,#121214);border:1px solid rgba(255,255,255,0.08);border-radius:16px;margin:8px 0 14px;color:#f2f3f5;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.25)}
 @keyframes ftt-in{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
 @keyframes ftt-spin{to{transform:rotate(360deg)}}
 .ftt-spin{animation:ftt-spin .9s linear infinite}
@@ -541,7 +546,7 @@ export default definePlugin({
                 },
                 {
                     match: /children:(!\i)&&\(0,(\i)\.jsx\)\((\i),\{channel:(\i),hasAnyThread:(\i),hasActiveThreads:(\i)\},\4\.id\)/,
-                    replace: "children:$1&&(0,$2.jsxs)($2.Fragment,{children:[(0,$2.jsx)($self.Toolbar,{channelId:$4.id}),(0,$2.jsx)($3,{channel:$4,hasAnyThread:$5,hasActiveThreads:$6},$4.id)]})"
+                    replace: "children:(0,$2.jsxs)($2.Fragment,{children:[(0,$2.jsx)($self.Toolbar,{channelId:$4.id}),$1&&(0,$2.jsx)($3,{channel:$4,hasAnyThread:$5,hasActiveThreads:$6},$4.id)]})"
                 }
             ]
         },
