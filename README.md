@@ -2,6 +2,8 @@
 
 A [Vencord](https://github.com/Vendicated/Vencord) custom plugin that adds a local toolbar to Discord forum channels. Sort, filter and search forum posts without leaving the forum.
 
+![ForumThreadTools screenshot](screenshot.png)
+
 ## Features
 
 - Sort: default, newest, oldest, recently active (pinned posts stay on top)
