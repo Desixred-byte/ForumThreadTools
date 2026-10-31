@@ -167,7 +167,7 @@ const CSS = `
 .ftt-btn.danger:hover{background:rgba(218,55,60,.85)}
 .ftt-tagimg{width:16px;height:16px;border-radius:3px;object-fit:contain}
 
-.ftt-autocomplete{position:relative;flex:1 1 260px;min-width:0;max-width:100%;box-sizing:border-box;display:flex;flex-direction:column}
+.ftt-autocomplete{position:relative;flex:0 1 240px;width:240px;min-width:180px;max-width:240px;box-sizing:border-box;display:flex;flex-direction:column}
 .ftt-autocomplete>.ftt-input{width:100%;box-sizing:border-box}
 .ftt-suggestions{position:static;width:100%;max-width:100%;box-sizing:border-box;max-height:180px;overflow-y:auto;overscroll-behavior:contain;margin-top:6px;background:#232428;border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:5px;box-shadow:0 6px 18px rgba(0,0,0,.28)}
 .ftt-suggestion{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:9px 10px;border:0;border-radius:7px;background:transparent;color:#f2f3f5;text-align:left;cursor:pointer;font:inherit}
@@ -538,6 +538,7 @@ export default definePlugin({
     setLoader,
     Toolbar
 });
+
 
 
 
